@@ -14,14 +14,10 @@ def is_admin():
     except:
         return False
 
-def run_as_admin():
-    params = " ".join([f'"{arg}"' for arg in sys.argv])
-    return ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, f'"{__file__}" {params}', None, 1) > 32
-
 class MimicLiteGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Mimic Lite Pro - 楓之谷優化版")
+        self.root.title("Mimic Lite Pro - 毫秒統一版")
         self.root.geometry("380x600")
         self.root.attributes("-topmost", True)
 
@@ -32,7 +28,6 @@ class MimicLiteGUI:
 
         self._setup_ui()
 
-        # 熱鍵設定
         self.hk = keyboard.GlobalHotKeys({
             '<f8>': self.start_record,
             '<f9>': self.start_play,
@@ -42,10 +37,10 @@ class MimicLiteGUI:
         self.hk.start()
 
     def _setup_ui(self):
-        tk.Label(self.root, text="模擬硬體級按鍵 (pynput 強化版)", font=("Arial", 12, "bold")).pack(pady=10)
+        tk.Label(self.root, text="模擬硬體級按鍵 (單位：毫秒)", font=("Arial", 12, "bold")).pack(pady=10)
 
         status_color = "green" if is_admin() else "red"
-        admin_text = "● 管理員權限已取得" if is_admin() else "○ 請以管理員身份執行以利驅動"
+        admin_text = "● 管理員權限已取得" if is_admin() else "○ 請以管理員身份執行"
         tk.Label(self.root, text=admin_text, fg=status_color).pack()
 
         self.lb_status = tk.Label(self.root, text="狀態: 閒置", font=("Arial", 12), fg="blue")
@@ -64,13 +59,14 @@ class MimicLiteGUI:
         self.en_time.insert(0, "00:00:00")
         self.en_time.grid(row=1, column=1, pady=2)
 
-        tk.Label(cfg, text="循環間隔秒數:").grid(row=2, column=0, sticky="w")
+        # 這裡統一為毫秒 (ms) [cite: 2, 3]
+        tk.Label(cfg, text="循環間隔 (毫秒):").grid(row=2, column=0, sticky="w")
         self.en_int = tk.Entry(cfg, width=10)
-        self.en_int.insert(0, "1.0")
+        self.en_int.insert(0, "1000") 
         self.en_int.grid(row=2, column=1, pady=2)
 
         self.var_rand = tk.BooleanVar(value=True)
-        tk.Checkbutton(cfg, text="開啟進階防偵測隨機化", variable=self.var_rand).grid(row=3, columnspan=2)
+        tk.Checkbutton(cfg, text="開啟高斯隨機化 (±20%)", variable=self.var_rand).grid(row=3, columnspan=2)
 
         btn_style = {"font": ("微軟正黑體", 10, "bold"), "height": 2, "width": 25}
         tk.Button(self.root, text="● 開始錄製 (F8)", bg="#e67e22", fg="white", **btn_style,
@@ -89,67 +85,50 @@ class MimicLiteGUI:
     def start_play(self):
         if self.is_recording or self.is_running: return
         try:
-            # 預先檢查輸入參數格式
             int(self.en_loop.get())
-            self._parse_hms(self.en_time.get())
-            float(self.en_int.get())
+            float(self.en_int.get()) # 檢查間隔是否為有效數值 
         except ValueError:
-            messagebox.showerror("格式錯誤", "請檢查循環次數、時間格式或間隔秒數是否正確")
+            messagebox.showerror("格式錯誤", "請檢查輸入欄位是否為正確數字")
             return
-
         self.is_running = True
         threading.Thread(target=self._orchestrate, daemon=True).start()
 
     def stop_all(self):
-        if self.is_recording:
-            self.recorder.stop()
-            self.is_recording = False
-        if self.is_running:
-            self.is_running = False
-            self.player.stop()
-        self.lb_status.config(text="狀態: 已手動停止", fg="blue")
+        if self.is_recording: self.recorder.stop(); self.is_recording = False
+        if self.is_running: self.is_running = False; self.player.stop()
+        self.lb_status.config(text="狀態: 已停止", fg="blue")
 
     def _orchestrate(self):
         loops = int(self.en_loop.get())
-        dur = self._parse_hms(self.en_time.get())
-        interval = float(self.en_int.get())
+        dur_sec = self._parse_hms(self.en_time.get())
+        interval_ms = float(self.en_int.get()) # 取得毫秒單位 
         rand = self.var_rand.get()
 
         start_time = time.time()
         cnt = 0
         while self.is_running:
-            if dur > 0 and (time.time() - start_time) >= dur:
-                break
-            elif loops > 0 and cnt >= loops:
-                break
+            if dur_sec > 0 and (time.time() - start_time) >= dur_sec: break
+            elif loops > 0 and cnt >= loops: break
 
-            self.lb_status.config(text=f"狀態: 第 {cnt + 1} 次執行中", fg="green")
-            # 呼叫正確的方法名稱
+            self.lb_status.config(text=f"狀態: 第 {cnt + 1} 次執行", fg="green")
             self.player.play_once(use_random=rand)
             cnt += 1
 
             if not self.is_running: break
-            
-            self.lb_status.config(text=f"狀態: 間隔休息中...", fg="orange")
-            # 動態等待邏輯，確保能隨時響應停止信號
-            wake = time.time() + interval
-            while time.time() < wake and self.is_running:
-                time.sleep(0.1)
+            self.lb_status.config(text=f"狀態: 休息中...", fg="orange")
+            # 直接使用毫秒傳遞給高精度 sleep 
+            self.player._precise_sleep_ms(interval_ms)
 
         self.is_running = False
-        self.lb_status.config(text="狀態: 任務已完成", fg="blue")
+        self.lb_status.config(text="狀態: 閒置", fg="blue")
 
     def _parse_hms(self, s):
         try:
             h, m, sec = map(int, s.split(':'))
             return h * 3600 + m * 60 + sec
-        except:
-            return 0
+        except: return 0
 
 if __name__ == "__main__":
-    if not is_admin():
-        if messagebox.askyesno("權限請求", "《楓之谷》需管理員權限方能模擬輸入，是否提升權限？"):
-            if run_as_admin(): sys.exit()
     root = tk.Tk()
     app = MimicLiteGUI(root)
     root.mainloop()
